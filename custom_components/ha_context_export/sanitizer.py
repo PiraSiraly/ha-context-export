@@ -36,6 +36,16 @@ _HELPER_STORAGE_NAMES = {
 _EMAIL_RE = re.compile(
     r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b"
 )
+_MAC_RE = re.compile(
+    r"(?i)\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b"
+)
+_PRIVATE_IPV4_RE = re.compile(
+    r"\b(?:"
+    r"10[.-](?:\d{1,3}[.-]){2}\d{1,3}|"
+    r"192[.-]168[.-]\d{1,3}[.-]\d{1,3}|"
+    r"172[.-](?:1[6-9]|2\d|3[01])[.-]\d{1,3}[.-]\d{1,3}"
+    r")\b"
+)
 
 _YAML_ASSIGNMENT_RE = re.compile(
     r"^(?P<indent>\s*)(?P<prefix>-\s+)?"
@@ -84,7 +94,9 @@ def install_export_sanitizers(exporter: ModuleType) -> None:
 
     def sanitize_string(value: str) -> str:
         value = original_sanitize_string(value)
-        return _EMAIL_RE.sub(_REDACTED, value)
+        value = _EMAIL_RE.sub(_REDACTED, value)
+        value = _MAC_RE.sub(_REDACTED, value)
+        return _PRIVATE_IPV4_RE.sub(_REDACTED, value)
 
     def sanitize_yaml_text(text: str) -> str:
         """Redact scalar and nested-block YAML secrets safely.
@@ -178,6 +190,7 @@ def install_export_sanitizers(exporter: ModuleType) -> None:
                 "Sensitive nested YAML mappings/lists are replaced as a complete block.",
                 "Email addresses are replaced with <REDACTED>.",
                 "Chat IDs, Zigbee network identifiers/keys, SSIDs and usernames are redacted.",
+                "MAC addresses and private IPv4 addresses embedded in labels/names are redacted.",
                 "input_text initial values are never exported from helper storage.",
             ]
         )
