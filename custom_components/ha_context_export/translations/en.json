@@ -1,0 +1,15 @@
+{
+  "title": "HA Context Export",
+  "config": {
+    "abort": {
+      "already_configured": "HA Context Export is already configured."
+    }
+  },
+  "entity": {
+    "button": {
+      "create_export": {
+        "name": "Create context export"
+      }
+    }
+  }
+}
