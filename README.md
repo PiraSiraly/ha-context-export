@@ -42,13 +42,22 @@ This repository can be added to HACS as a **Custom repository** of type **Integr
 
 ## Usage
 
-After setup, Home Assistant exposes an **Export context** button. Pressing it creates a sanitized ZIP snapshot and a persistent Home Assistant notification containing an authenticated download link.
+After setup, Home Assistant exposes an **Export context** button. Pressing it creates a sanitized ZIP snapshot and a persistent Home Assistant notification containing a private download link.
 
 The ZIP stays on the Home Assistant instance until it is replaced by a newer export.
 
 ## Security model
 
-The download endpoint requires Home Assistant authentication and additionally checks for an administrator account. Export files are stored below Home Assistant's private `.storage` directory and are never placed in `/config/www`.
+The ZIP is stored below Home Assistant's private `.storage` directory and is never placed in `/config/www`.
+
+Direct browser navigation to authenticated Home Assistant API endpoints does not automatically carry the frontend Bearer token. To allow a download link in a Home Assistant notification to work reliably, HA Context Export therefore creates a cryptographically random capability token for each export. The token:
+
+- is embedded only in the private download link,
+- expires after 60 minutes,
+- is replaced whenever a new export is created,
+- is checked with constant-time comparison before the ZIP is served.
+
+Requests without the current valid token cannot download the export. The response is also marked `no-store` and uses a `no-referrer` policy.
 
 Automatic sanitization cannot prove that arbitrary user-authored text contains no sensitive information. Review an export before sharing it outside your own trusted workflow.
 
