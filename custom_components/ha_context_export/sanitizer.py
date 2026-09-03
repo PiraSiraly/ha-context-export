@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import re
 from types import ModuleType
+from typing import Any
 
 _REDACTED = "<REDACTED>"
 
@@ -15,6 +17,20 @@ _SENSITIVE_EXACT_KEYS = {
     "ssid",
     "user",
     "username",
+}
+
+_HELPER_STORAGE_NAMES = {
+    "counter",
+    "group",
+    "input_boolean",
+    "input_button",
+    "input_datetime",
+    "input_number",
+    "input_select",
+    "input_text",
+    "schedule",
+    "timer",
+    "utility_meter",
 }
 
 _EMAIL_RE = re.compile(
@@ -35,15 +51,29 @@ def _normalize_key(key: str) -> str:
     return key.lower().replace("-", "_").replace(" ", "_")
 
 
-def install_export_sanitizers(exporter: ModuleType) -> None:
-    """Install hardened sanitizers into the exporter module.
+def _redact_key_recursively(value: Any, key_to_redact: str) -> Any:
+    """Redact one exact key recursively in a JSON-like object."""
+    if isinstance(value, dict):
+        return {
+            key: (
+                _REDACTED
+                if _normalize_key(str(key)) == key_to_redact
+                else _redact_key_recursively(item, key_to_redact)
+            )
+            for key, item in value.items()
+        }
 
-    The exporter deliberately keeps its collection code independent from these
-    additional privacy rules. Installing here also lets older exports remain
-    readable while tightening future snapshots without touching registry logic.
-    """
+    if isinstance(value, list):
+        return [_redact_key_recursively(item, key_to_redact) for item in value]
+
+    return value
+
+
+def install_export_sanitizers(exporter: ModuleType) -> None:
+    """Install hardened sanitizers and safe helper-storage export hooks."""
     original_is_sensitive_key = exporter._is_sensitive_key
     original_sanitize_string = exporter._sanitize_string
+    original_build_export_files = exporter._build_export_files
 
     def is_sensitive_key(key: str) -> bool:
         normalized = _normalize_key(key)
@@ -108,6 +138,55 @@ def install_export_sanitizers(exporter: ModuleType) -> None:
 
         return "\n".join(output) + ("\n" if text.endswith("\n") else "")
 
+    def build_export_files(config_dir, staging_dir, snapshot):
+        """Extend the regular export with sanitized UI-helper definitions."""
+        details = original_build_export_files(config_dir, staging_dir, snapshot)
+        storage_dir = config_dir / ".storage"
+        copied: list[str] = []
+
+        if storage_dir.is_dir():
+            for name in sorted(_HELPER_STORAGE_NAMES):
+                source = storage_dir / name
+                if not source.is_file():
+                    continue
+
+                try:
+                    raw = json.loads(source.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError, UnicodeError):
+                    continue
+
+                # input_text can contain an arbitrary configured initial value.
+                # Keep its structure but never export that value.
+                if name == "input_text":
+                    raw = _redact_key_recursively(raw, "initial")
+
+                exporter._write_json(
+                    staging_dir / "helpers" / "storage" / f"{name}.json",
+                    raw,
+                )
+                copied.append(name)
+
+        report_path = staging_dir / "SECURITY_REPORT.json"
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, UnicodeError):
+            report = {}
+
+        report["helper_storage_files_copied"] = copied
+        report.setdefault("sanitization", []).extend(
+            [
+                "Sensitive nested YAML mappings/lists are replaced as a complete block.",
+                "Email addresses are replaced with <REDACTED>.",
+                "Chat IDs, Zigbee network identifiers/keys, SSIDs and usernames are redacted.",
+                "input_text initial values are never exported from helper storage.",
+            ]
+        )
+        exporter._write_json(report_path, report)
+
+        details["helper_storage"] = copied
+        return details
+
     exporter._is_sensitive_key = is_sensitive_key
     exporter._sanitize_string = sanitize_string
     exporter._sanitize_yaml_text = sanitize_yaml_text
+    exporter._build_export_files = build_export_files
