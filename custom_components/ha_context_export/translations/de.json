@@ -1,6 +1,12 @@
 {
   "title": "HA Context Export",
   "config": {
+    "step": {
+      "user": {
+        "title": "HA Context Export",
+        "description": "Richtet den lokalen Kontext-Exporter ein. Es ist keine weitere Konfiguration erforderlich."
+      }
+    },
     "abort": {
       "already_configured": "HA Context Export ist bereits eingerichtet."
     }
