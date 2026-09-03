@@ -8,7 +8,7 @@ from pathlib import Path
 import secrets
 import time
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from aiohttp import web
 import voluptuous as vol
@@ -19,6 +19,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.network import NoURLAvailableError, get_url
 
 from .const import (
     DATA_LATEST_EXPORT,
@@ -104,6 +105,32 @@ async def _ensure_admin_or_system(
         )
 
 
+def _absolute_download_url(hass: HomeAssistant, relative_url: str) -> str | None:
+    """Build an absolute HA URL suitable for handing off to a browser."""
+    try:
+        base_url = get_url(hass)
+    except NoURLAvailableError:
+        return None
+
+    return f"{base_url.rstrip('/')}{relative_url}"
+
+
+def _android_browser_intent(url: str) -> str | None:
+    """Build an Android intent URL that opens the system browser."""
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+
+    target = f"{parsed.netloc}{parsed.path}"
+    if parsed.query:
+        target = f"{target}?{parsed.query}"
+
+    return (
+        f"intent://{target}#Intent;scheme={parsed.scheme};"
+        "action=android.intent.action.VIEW;end"
+    )
+
+
 def async_notify_export_ready(hass: HomeAssistant, filename: str) -> None:
     """Create a short-lived capability link and show it in a notification."""
     export_info = hass.data.get(DOMAIN, {}).get(DATA_LATEST_EXPORT)
@@ -116,11 +143,24 @@ def async_notify_export_ready(hass: HomeAssistant, filename: str) -> None:
         time.monotonic() + DOWNLOAD_TOKEN_TTL_SECONDS
     )
 
-    download_url = f"{DOWNLOAD_URL}?{urlencode({'token': token})}"
+    relative_url = f"{DOWNLOAD_URL}?{urlencode({'token': token})}"
+    absolute_url = _absolute_download_url(hass, relative_url)
+    browser_intent = (
+        _android_browser_intent(absolute_url) if absolute_url is not None else None
+    )
+
+    links: list[str] = []
+    if browser_intent is not None:
+        links.append(f"[Im Browser herunterladen]({browser_intent})")
+    if absolute_url is not None:
+        links.append(f"[Direkter Download]({absolute_url})")
+    else:
+        links.append(f"[Direkter Download]({relative_url})")
+
     message = (
         f"The sanitized context export **{filename}** is ready.\n\n"
-        f"[Download context export]({download_url})\n\n"
-        "This private download link expires after 60 minutes and is replaced "
+        + "  ·  ".join(links)
+        + "\n\nThis private download link expires after 60 minutes and is replaced "
         "when a new export is created."
     )
     persistent_notification.async_create(
