@@ -9,6 +9,7 @@ PLATFORMS: Final = [Platform.BUTTON]
 
 SERVICE_CREATE: Final = "create"
 DOWNLOAD_URL: Final = "/api/ha_context_export/download"
+DOWNLOAD_TOKEN_TTL_SECONDS: Final = 60 * 60
 DATA_LATEST_EXPORT: Final = "latest_export"
 EXPORT_DIR_NAME: Final = "ha_context_export"
 
