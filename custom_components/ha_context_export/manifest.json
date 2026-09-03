@@ -7,7 +7,8 @@
   "config_flow": true,
   "dependencies": [
     "frontend",
-    "http"
+    "http",
+    "lovelace"
   ],
   "documentation": "https://github.com/PiraSiraly/ha-context-export",
   "integration_type": "service",
@@ -15,5 +16,5 @@
   "issue_tracker": "https://github.com/PiraSiraly/ha-context-export/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.1.4"
+  "version": "0.1.5"
 }
