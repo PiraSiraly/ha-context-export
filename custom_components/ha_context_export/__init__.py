@@ -14,7 +14,6 @@ from aiohttp import web
 import voluptuous as vol
 
 from homeassistant.components import persistent_notification
-from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import (
     KEY_HASS,
     KEY_HASS_USER,
@@ -37,6 +36,7 @@ from .const import (
     SERVICE_CREATE,
 )
 from . import exporter as exporter_module
+from .frontend_registration import async_register_frontend_resource
 from .sanitizer import install_export_sanitizers
 
 install_export_sanitizers(exporter_module)
@@ -47,6 +47,7 @@ SERVICE_SCHEMA = vol.Schema({})
 
 CREATE_DOWNLOAD_URL = "/api/ha_context_export/create_download"
 FRONTEND_URL = "/ha_context_export/frontend/ha-context-export-card.js"
+FRONTEND_VERSION = "0.1.5"
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
@@ -60,7 +61,9 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
         await hass.http.async_register_static_paths(
             [StaticPathConfig(FRONTEND_URL, str(frontend_file), False)]
         )
-        add_extra_js_url(hass, FRONTEND_URL)
+        await async_register_frontend_resource(
+            hass, FRONTEND_URL, FRONTEND_VERSION
+        )
         hass.data[DOMAIN]["frontend_registered"] = True
 
     if not hass.data[DOMAIN].get("http_registered"):
@@ -218,9 +221,6 @@ class HAContextExportCreateDownloadView(HomeAssistantView):
         result = await async_create_export(hass)
         download = _prepare_download(hass, result["filename"])
 
-        # The frontend deliberately receives a same-origin relative URL. Its
-        # JavaScript performs a real window.location navigation so Home
-        # Assistant's SPA router cannot swallow the download click.
         return web.json_response(
             {
                 "filename": result["filename"],
