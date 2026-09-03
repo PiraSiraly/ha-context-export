@@ -1,0 +1,17 @@
+{
+  "domain": "ha_context_export",
+  "name": "HA Context Export",
+  "version": "0.1.0",
+  "codeowners": [
+    "@PiraSiraly"
+  ],
+  "config_flow": true,
+  "single_config_entry": true,
+  "dependencies": [
+    "http"
+  ],
+  "documentation": "https://github.com/PiraSiraly/ha-context-export",
+  "issue_tracker": "https://github.com/PiraSiraly/ha-context-export/issues",
+  "integration_type": "service",
+  "requirements": []
+}
