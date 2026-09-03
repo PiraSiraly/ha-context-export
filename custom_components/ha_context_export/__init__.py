@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 from http import HTTPStatus
+import hmac
 from pathlib import Path
+import secrets
+import time
 from typing import Any
+from urllib.parse import urlencode
 
 from aiohttp import web
 import voluptuous as vol
 
-from homeassistant.auth.models import User
 from homeassistant.components import persistent_notification
-from homeassistant.components.http import KEY_HASS, KEY_HASS_USER, HomeAssistantView
+from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
@@ -20,6 +23,7 @@ from homeassistant.helpers import config_validation as cv
 from .const import (
     DATA_LATEST_EXPORT,
     DOMAIN,
+    DOWNLOAD_TOKEN_TTL_SECONDS,
     DOWNLOAD_URL,
     EXPORT_DIR_NAME,
     PLATFORMS,
@@ -32,7 +36,7 @@ SERVICE_SCHEMA = vol.Schema({})
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
-    """Set up services and the authenticated download endpoint."""
+    """Set up services and the protected download endpoint."""
     hass.data.setdefault(DOMAIN, {})
 
     if not hass.data[DOMAIN].get("http_registered"):
@@ -97,11 +101,23 @@ async def _ensure_admin_or_system(
 
 
 def async_notify_export_ready(hass: HomeAssistant, filename: str) -> None:
-    """Show a persistent notification with the authenticated download link."""
+    """Create a short-lived capability link and show it in a notification."""
+    export_info = hass.data.get(DOMAIN, {}).get(DATA_LATEST_EXPORT)
+    if export_info is None:
+        raise HomeAssistantError("No context export metadata is available.")
+
+    token = secrets.token_urlsafe(32)
+    export_info["download_token"] = token
+    export_info["download_token_expires"] = (
+        time.monotonic() + DOWNLOAD_TOKEN_TTL_SECONDS
+    )
+
+    download_url = f"{DOWNLOAD_URL}?{urlencode({'token': token})}"
     message = (
         f"The sanitized context export **{filename}** is ready.\n\n"
-        f"[Download context export]({DOWNLOAD_URL})\n\n"
-        "The download is available only to signed-in Home Assistant administrators."
+        f"[Download context export]({download_url})\n\n"
+        "This private download link expires after 60 minutes and is replaced "
+        "when a new export is created."
     )
     persistent_notification.async_create(
         hass,
@@ -112,25 +128,37 @@ def async_notify_export_ready(hass: HomeAssistant, filename: str) -> None:
 
 
 class HAContextExportDownloadView(HomeAssistantView):
-    """Serve the latest context export to authenticated administrators."""
+    """Serve the latest context export through a short-lived capability link."""
 
     url = DOWNLOAD_URL
     name = "api:ha_context_export:download"
-    requires_auth = True
+    requires_auth = False
 
     async def get(self, request: web.Request) -> web.StreamResponse:
-        """Download the latest generated ZIP."""
+        """Download the latest generated ZIP when the capability token is valid."""
         hass: HomeAssistant = request.app[KEY_HASS]
-        user: User = request[KEY_HASS_USER]
-
-        if not user.is_admin:
-            raise web.HTTPForbidden(
-                text="Only Home Assistant administrators may download this export."
-            )
-
         export_info = hass.data.get(DOMAIN, {}).get(DATA_LATEST_EXPORT)
+
         if not export_info:
             raise web.HTTPNotFound(text="No context export has been generated yet.")
+
+        expected_token = export_info.get("download_token")
+        provided_token = request.query.get("token")
+        expires_at = export_info.get("download_token_expires")
+
+        if (
+            not isinstance(expected_token, str)
+            or not isinstance(provided_token, str)
+            or not hmac.compare_digest(provided_token, expected_token)
+        ):
+            raise web.HTTPForbidden(text="Invalid context export download link.")
+
+        if not isinstance(expires_at, (int, float)) or time.monotonic() > expires_at:
+            export_info.pop("download_token", None)
+            export_info.pop("download_token_expires", None)
+            raise web.HTTPGone(
+                text="This context export download link has expired. Create a new export."
+            )
 
         path = Path(export_info["path"])
         if not path.is_file():
@@ -142,5 +170,7 @@ class HAContextExportDownloadView(HomeAssistantView):
         )
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Content-Type-Options"] = "nosniff"
         response.set_status(HTTPStatus.OK)
         return response
