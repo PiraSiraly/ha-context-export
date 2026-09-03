@@ -1,0 +1,5 @@
+create:
+  name: Create context export
+  description: >-
+    Creates a sanitized Home Assistant context snapshot for technical analysis,
+    documentation, troubleshooting, or AI-assisted work.
