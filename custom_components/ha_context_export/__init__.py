@@ -14,7 +14,13 @@ from aiohttp import web
 import voluptuous as vol
 
 from homeassistant.components import persistent_notification
-from homeassistant.components.http import KEY_HASS, HomeAssistantView
+from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.components.http import (
+    KEY_HASS,
+    KEY_HASS_USER,
+    HomeAssistantView,
+    StaticPathConfig,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
@@ -39,13 +45,27 @@ async_create_export = exporter_module.async_create_export
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 SERVICE_SCHEMA = vol.Schema({})
 
+CREATE_DOWNLOAD_URL = "/api/ha_context_export/create_download"
+FRONTEND_URL = "/ha_context_export/frontend/ha-context-export-card.js"
+
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
-    """Set up services and the protected download endpoint."""
+    """Set up services, frontend resource, and protected download endpoints."""
     hass.data.setdefault(DOMAIN, {})
+
+    if not hass.data[DOMAIN].get("frontend_registered"):
+        frontend_file = (
+            Path(__file__).parent / "frontend" / "ha-context-export-card.js"
+        )
+        await hass.http.async_register_static_paths(
+            [StaticPathConfig(FRONTEND_URL, str(frontend_file), False)]
+        )
+        add_extra_js_url(hass, FRONTEND_URL)
+        hass.data[DOMAIN]["frontend_registered"] = True
 
     if not hass.data[DOMAIN].get("http_registered"):
         hass.http.register_view(HAContextExportDownloadView())
+        hass.http.register_view(HAContextExportCreateDownloadView())
         hass.data[DOMAIN]["http_registered"] = True
 
     latest_path = (
@@ -131,8 +151,8 @@ def _android_browser_intent(url: str) -> str | None:
     )
 
 
-def async_notify_export_ready(hass: HomeAssistant, filename: str) -> None:
-    """Create a short-lived capability link and show it in a notification."""
+def _prepare_download(hass: HomeAssistant, filename: str) -> dict[str, str]:
+    """Create a fresh short-lived capability URL for the latest export."""
     export_info = hass.data.get(DOMAIN, {}).get(DATA_LATEST_EXPORT)
     if export_info is None:
         raise HomeAssistantError("No context export metadata is available.")
@@ -145,23 +165,30 @@ def async_notify_export_ready(hass: HomeAssistant, filename: str) -> None:
 
     relative_url = f"{DOWNLOAD_URL}?{urlencode({'token': token})}"
     absolute_url = _absolute_download_url(hass, relative_url)
-    browser_intent = (
-        _android_browser_intent(absolute_url) if absolute_url is not None else None
-    )
+
+    return {
+        "filename": filename,
+        "relative_url": relative_url,
+        "absolute_url": absolute_url or relative_url,
+    }
+
+
+def async_notify_export_ready(hass: HomeAssistant, filename: str) -> None:
+    """Show fallback download links in a persistent notification."""
+    download = _prepare_download(hass, filename)
+    absolute_url = download["absolute_url"]
+    browser_intent = _android_browser_intent(absolute_url)
 
     links: list[str] = []
     if browser_intent is not None:
         links.append(f"[Im Browser herunterladen]({browser_intent})")
-    if absolute_url is not None:
-        links.append(f"[Direkter Download]({absolute_url})")
-    else:
-        links.append(f"[Direkter Download]({relative_url})")
+    links.append(f"[Direkter Download]({absolute_url})")
 
     message = (
         f"The sanitized context export **{filename}** is ready.\n\n"
         + "  ·  ".join(links)
-        + "\n\nThis private download link expires after 60 minutes and is replaced "
-        "when a new export is created."
+        + "\n\nFor a reliable one-click download, use the **HA Context Export** "
+        "dashboard card. This private fallback link expires after 60 minutes."
     )
     persistent_notification.async_create(
         hass,
@@ -169,6 +196,38 @@ def async_notify_export_ready(hass: HomeAssistant, filename: str) -> None:
         "HA Context Export",
         "ha_context_export_ready",
     )
+
+
+class HAContextExportCreateDownloadView(HomeAssistantView):
+    """Create an export and return a download URL to the HA frontend."""
+
+    url = CREATE_DOWNLOAD_URL
+    name = "api:ha_context_export:create_download"
+    requires_auth = True
+
+    async def post(self, request: web.Request) -> web.Response:
+        """Create an export for an authenticated administrator."""
+        hass: HomeAssistant = request.app[KEY_HASS]
+        user = request[KEY_HASS_USER]
+
+        if user is None or not user.is_admin:
+            raise web.HTTPForbidden(
+                text="Only Home Assistant administrators may create an export."
+            )
+
+        result = await async_create_export(hass)
+        download = _prepare_download(hass, result["filename"])
+
+        # The frontend deliberately receives a same-origin relative URL. Its
+        # JavaScript performs a real window.location navigation so Home
+        # Assistant's SPA router cannot swallow the download click.
+        return web.json_response(
+            {
+                "filename": result["filename"],
+                "download_url": download["relative_url"],
+                "expires_in": DOWNLOAD_TOKEN_TTL_SECONDS,
+            }
+        )
 
 
 class HAContextExportDownloadView(HomeAssistantView):
