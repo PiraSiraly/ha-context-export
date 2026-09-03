@@ -40,9 +40,28 @@ This repository can be added to HACS as a **Custom repository** of type **Integr
 7. Go to **Settings → Devices & services → Add integration**.
 8. Search for **HA Context Export** and add it.
 
-## Usage
+## One-click dashboard download
 
-After setup, Home Assistant exposes an **Export context** button. Pressing it creates a sanitized ZIP snapshot and a persistent Home Assistant notification containing a private download link.
+The integration automatically loads its Lovelace card; no separate frontend repository or Lovelace resource is required.
+
+After installing or updating the integration and restarting Home Assistant:
+
+1. Edit a dashboard.
+2. Choose **Add card**.
+3. Select **HA Context Export**.
+4. Press **Export erstellen & herunterladen**.
+
+The card creates a fresh sanitized export through an authenticated Home Assistant API call and then starts a real browser download. It deliberately avoids Home Assistant markdown links and SPA routing, which can swallow ordinary download-link clicks.
+
+If the card picker does not list the card, it can also be added manually:
+
+```yaml
+type: custom:ha-context-export-card
+```
+
+## Other usage
+
+Home Assistant also exposes an **Export context** button entity / `ha_context_export.create` action. Those create an export and show fallback download links in a persistent Home Assistant notification.
 
 The ZIP stays on the Home Assistant instance until it is replaced by a newer export.
 
@@ -50,14 +69,14 @@ The ZIP stays on the Home Assistant instance until it is replaced by a newer exp
 
 The ZIP is stored below Home Assistant's private `.storage` directory and is never placed in `/config/www`.
 
-Direct browser navigation to authenticated Home Assistant API endpoints does not automatically carry the frontend Bearer token. To allow a download link in a Home Assistant notification to work reliably, HA Context Export therefore creates a cryptographically random capability token for each export. The token:
+The dashboard card itself talks to an authenticated, administrator-only API endpoint. Once an export has been generated, HA Context Export creates a cryptographically random short-lived capability URL for the binary download. The token:
 
-- is embedded only in the private download link,
+- is returned only to the authenticated frontend or embedded in a fallback notification link,
 - expires after 60 minutes,
 - is replaced whenever a new export is created,
 - is checked with constant-time comparison before the ZIP is served.
 
-Requests without the current valid token cannot download the export. The response is also marked `no-store` and uses a `no-referrer` policy.
+Requests without the current valid token cannot download the export. The response is marked `no-store` and uses a `no-referrer` policy.
 
 Automatic sanitization cannot prove that arbitrary user-authored text contains no sensitive information. Review an export before sharing it outside your own trusted workflow.
 
