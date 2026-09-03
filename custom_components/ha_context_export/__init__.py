@@ -29,7 +29,11 @@ from .const import (
     PLATFORMS,
     SERVICE_CREATE,
 )
-from .exporter import async_create_export
+from . import exporter as exporter_module
+from .sanitizer import install_export_sanitizers
+
+install_export_sanitizers(exporter_module)
+async_create_export = exporter_module.async_create_export
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 SERVICE_SCHEMA = vol.Schema({})
