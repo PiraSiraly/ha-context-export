@@ -119,7 +119,13 @@ def install_export_sanitizers(exporter: ModuleType) -> None:
                     continue
 
                 indentation = len(line) - len(line.lstrip(" "))
-                if indentation > redact_child_indent:
+                # YAML permits "indentless" sequences. The dash of a list
+                # value may align with its key instead of being indented.
+                # Those list items still belong to the redacted secret.
+                if indentation > redact_child_indent or (
+                    indentation == redact_child_indent
+                    and line.lstrip(" ").startswith("- ")
+                ):
                     continue
 
                 redact_child_indent = None
@@ -142,7 +148,9 @@ def install_export_sanitizers(exporter: ModuleType) -> None:
                 )
 
                 if not raw_value or raw_value in _BLOCK_SCALARS:
-                    redact_child_indent = len(match.group("indent"))
+                    # A list-item key ("- chat_id:") is indented from the
+                    # key after the dash, not from the list item itself.
+                    redact_child_indent = len(match.group("indent")) + len(prefix)
 
                 continue
 

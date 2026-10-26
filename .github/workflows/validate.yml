@@ -19,6 +19,8 @@ jobs:
           python-version: "3.13"
       - name: Compile Python sources
         run: python -m compileall -q custom_components/ha_context_export
+      - name: Sanitizer regression tests
+        run: python -m unittest discover -s tests -v
       - name: Validate JSON files
         run: |
           python - <<'PY'
